@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-test:
+    name: 格式 / 静态检查 / 测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: 缓存依赖
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      # 警告当错误只在 Linux 上开：其它平台的代码有 cfg 分支，
+      # 在没跑过的那两个平台上可能出现「只在某平台才有的死代码」告警
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked --all-targets
+
+  # 只在 macOS / Windows 上验证「能编译」，测试仍然只在 Linux 跑：
+  # 引擎与界面测试里有用到路径大小写、隐藏文件等平台相关的假设，
+  # 三平台全加速要等这些断言按平台分叉之后再开。
+  build-check:
+    name: 编译检查 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存依赖
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo build
+        run: cargo build --locked

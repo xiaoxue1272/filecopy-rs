@@ -1,0 +1,42 @@
+[package]
+name = "filecopy-rs"
+version = "1.0.0"
+edition = "2021"
+description = "文件归档工具（filecopy 的 Rust 版）"
+license = "MIT"
+
+[lib]
+name = "filecopy_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "filecopy"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.30.2"
+crossterm = "0.29.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+
+# 校验和（--verify）：运行时按名字选择算法，故统一用 digest 的 DynDigest
+digest = "0.11.3"
+md-5 = "0.11.0"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
+blake2 = "0.11.0"
+
+# 复制时保留 mtime/atime —— std::fs::copy 只复制权限，不复制时间戳
+filetime = "0.2"
+# 外部 SIGTERM/SIGINT 也要走「清理临时文件再退出」，不能直接被杀掉
+ctrlc = "3"
+
+[dev-dependencies]
+tempfile = "3"
+
+# 发布用的可选优化：体积小、启动快；对调试没影响（只作用于 release）
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

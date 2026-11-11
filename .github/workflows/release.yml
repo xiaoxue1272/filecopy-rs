@@ -1,0 +1,201 @@
+name: Release
+
+# 打 v* 标签时自动打包三平台并发布到 Releases；手动触发时只产出可下载的构件，不建 Release。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: 打包 ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl 静态链接：一个文件丢到任何 Linux 发行版都能跑，不挑 glibc 版本
+          - os: ubuntu-latest
+            name: linux-x86_64
+            targets: x86_64-unknown-linux-musl
+          # macOS 出通用二进制（arm64 + x86_64 用 lipo 合成），M 系列和 Intel 都能跑
+          - os: macos-latest
+            name: macos-universal
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - os: windows-latest
+            name: windows-x86_64
+            targets: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 取版本号
+        id: version
+        shell: bash
+        run: |
+          # 有标签就用标签（v1.0.0 → 1.0.0），手动触发就退回 Cargo.toml
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "版本: $version"
+        env:
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - name: 缓存依赖
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      # musl 目标的链接器
+      - name: 安装 musl 工具链
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: 构建 (Linux)
+        if: runner.os == 'Linux'
+        env:
+          # musl 目标默认找 cc，这里明确指到 musl-gcc，否则会试着链 glibc 而失败
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          RUSTFLAGS: -C linker=musl-gcc
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: 构建 (macOS，两个架构)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: 合成通用二进制
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          lipo -create \
+            target/aarch64-apple-darwin/release/filecopy \
+            target/x86_64-apple-darwin/release/filecopy \
+            -output dist/filecopy
+          file dist/filecopy
+          lipo -info dist/filecopy
+
+      - name: 构建 (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: 打包 (Linux / macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            mkdir -p dist
+            cp target/x86_64-unknown-linux-musl/release/filecopy dist/filecopy
+          fi
+          cp README.md LICENSE dist/
+          # 权限写死，别让归档里的权限随检出环境变化
+          chmod 755 dist/filecopy
+          chmod 644 dist/README.md dist/LICENSE
+          # 用 -C dist . 打包：解压出来是干干净净的 filecopy / README.md / LICENSE
+          tar -czf "filecopy-v${VERSION}-${NAME}.tar.gz" -C dist .
+          echo "== 归档内容 =="
+          tar -tzf "filecopy-v${VERSION}-${NAME}.tar.gz"
+
+      - name: 打包 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NAME: ${{ matrix.name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/x86_64-pc-windows-msvc/release/filecopy.exe" "dist/filecopy.exe"
+          Copy-Item "README.md", "LICENSE" "dist/"
+          Compress-Archive -Path "dist/*" -DestinationPath "filecopy-v$env:VERSION-$env:NAME.zip" -Force
+          Write-Host "== 归档内容 =="
+          Get-ChildItem dist | Select-Object Name, Length
+
+      # 打出来的东西真的能跑，而不是「编译过了」就算
+      - name: 冒烟测试（能打印版本号）
+        shell: bash
+        env:
+          EXPECTED: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            bin="./dist/filecopy.exe"
+          else
+            bin="./dist/filecopy"
+          fi
+          out="$("$bin" --version)"
+          echo "$out"
+          if [[ "$out" != *"$EXPECTED"* ]]; then
+            echo "::error::版本号不符，期望 $EXPECTED，实际 $out"
+            exit 1
+          fi
+
+      - name: 上传构件
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          # 归档文件就在仓库根目录
+          path: filecopy-v*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: 发布到 GitHub Releases
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 防止「标签写 v1.0.1、Cargo.toml 还是 1.0.0」这种打好包才发现不一致的情况
+      - name: 校验标签与 Cargo.toml 版本一致
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$crate_version" != "$tag_version" ]]; then
+            echo "::error::标签 $GITHUB_REF_NAME 与 Cargo.toml 版本 $crate_version 不一致"
+            exit 1
+          fi
+          echo "版本一致: $crate_version"
+
+      - name: 下载所有平台的构件
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 生成校验和
+        working-directory: artifacts
+        run: |
+          sha256sum ./* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false

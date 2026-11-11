@@ -1,0 +1,4 @@
+/target
+/.idea
+# 界面里保存的配置会带上本机路径，别顺手提交
+/filecopy.json
