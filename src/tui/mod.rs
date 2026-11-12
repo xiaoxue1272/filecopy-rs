@@ -84,11 +84,11 @@ impl Field {
         Field::Advanced,
         // 高级选项里的开关（只在展开后可见，位置就在「高级选项」下面）
         Field::Conflict,
+        Field::FailEmpty,
         Field::Verify,
         Field::VerifyAlgo,
         Field::IncludeHidden,
         Field::Recursive,
-        Field::FailEmpty,
         // 操作
         Field::Start,
         Field::Preview,
@@ -237,7 +237,8 @@ fn conflict_idx_of(cfg: &Config) -> usize {
 }
 
 /// 并排显示的字段对（左, 右）。渲染和左右键换列都用这份定义，避免两处各写一遍。
-pub const FIELD_PAIRS: [(Field, Field); 2] = [
+pub const FIELD_PAIRS: [(Field, Field); 3] = [
+    (Field::Conflict, Field::FailEmpty),
     (Field::Verify, Field::VerifyAlgo),
     (Field::IncludeHidden, Field::Recursive),
 ];
@@ -2323,12 +2324,27 @@ mod tests {
         app.field = Field::VerifyAlgo;
         handle_key(&mut app, key(KeyCode::Down));
         assert_eq!(app.field, Field::Recursive);
+        // 最后一行的右列往下，进「操作」那一行的右列（预览）
         handle_key(&mut app, key(KeyCode::Down));
-        assert_eq!(app.field, Field::FailEmpty);
-        // 右列往上同理（从「空扫描算失败」这个单栏行回到右列）
+        assert_eq!(app.field, Field::Preview);
+        // 右列往上同理
         app.field = Field::Recursive;
         handle_key(&mut app, key(KeyCode::Up));
         assert_eq!(app.field, Field::VerifyAlgo);
+        // 第一行：同名文件 | 空扫描算失败，↓ 落在左列
+        app.field = Field::Conflict;
+        handle_key(&mut app, key(KeyCode::Down));
+        assert_eq!(app.field, Field::Verify);
+        // 这一行的两列之间用左右键走
+        app.field = Field::Conflict;
+        handle_key(&mut app, key(KeyCode::Right));
+        assert_eq!(app.field, Field::FailEmpty);
+        handle_key(&mut app, key(KeyCode::Left));
+        assert_eq!(app.field, Field::Conflict);
+        // 「空扫描算失败」往上没有右列了，回到「高级选项」开关本身
+        app.field = Field::FailEmpty;
+        handle_key(&mut app, key(KeyCode::Up));
+        assert_eq!(app.field, Field::Advanced);
         // 缓冲区（数字 + 单位同一行）往下就是「高级选项」
         app.field = Field::BufferSize;
         handle_key(&mut app, key(KeyCode::Down));

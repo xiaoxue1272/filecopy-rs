@@ -249,7 +249,7 @@ impl FormLayout {
         // 展开的内容紧跟在「高级选项」这一行下面，和它同属「更多选项」这一组
         if form.advanced_open {
             let column = (width.saturating_sub(4) as usize / 2).clamp(24, 34);
-            // 按屏幕顺序排；有配对的并排一行，没有配对的（空扫描算失败）单独一行
+            // 按屏幕顺序排；六个开关正好排成三行两列，右列不留空（见 FIELD_PAIRS）
             let mut placed = Vec::new();
             for field in super::Field::ALL {
                 if !field.is_advanced_group() || placed.contains(&field) {
@@ -733,24 +733,25 @@ fn pair_line(left: Line<'static>, right: Line<'static>, column: usize) -> Line<'
 /// 收起「高级选项」时，用它生成一行摘要，说明哪些高级设置在生效。
 fn advanced_summary(form: &FormData) -> String {
     // 分类策略和日期格式已经常驻在表单里，这里只摘要真正被收起的那几项
+    // 顺序跟表单里的排布一致（第一行 → 最后一行），扫一眼就能对上那一行
     let mut parts = Vec::new();
+    let policy = form.conflict_idx.min(super::CONFLICT_POLICIES.len() - 1);
+    if policy > 0 {
+        parts.push(format!("同名:{}", super::CONFLICT_POLICIES[policy]));
+    }
+    if form.fail_empty {
+        parts.push("空扫描失败".to_string());
+    }
     if form.verify {
         let algo =
             super::VERIFY_ALGORITHMS[form.verify_algo_idx.min(super::VERIFY_ALGORITHMS.len() - 1)];
         parts.push(format!("校验 {algo}"));
-    }
-    let policy = form.conflict_idx.min(super::CONFLICT_POLICIES.len() - 1);
-    if policy > 0 {
-        parts.push(format!("同名:{}", super::CONFLICT_POLICIES[policy]));
     }
     if form.include_hidden {
         parts.push("含隐藏".to_string());
     }
     if !form.recursive {
         parts.push("不递归".to_string());
-    }
-    if form.fail_empty {
-        parts.push("空扫描失败".to_string());
     }
     parts.join(" · ")
 }
