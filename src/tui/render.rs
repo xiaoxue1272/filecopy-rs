@@ -1172,13 +1172,13 @@ mod tests {
 
         // 截图里的「示例落点」现在走真实计算，所以得造一棵真实存在的小目录：
         // 固定用 /tmp 下的短路径，比 /var/folders/xxxx/T 好读，也不占空间。
-        let card = PathBuf::from("/tmp/filecopy-dump-card");
-        let source = card.join("相册").join("旅行");
+        let sink = PathBuf::from("/tmp/filecopy-dump");
+        let source = sink.join("待归档").join("第一批");
         std::fs::create_dir_all(&source).unwrap();
         for (name, size) in [
-            ("照片-001.jpg", 3_400_000u64),
-            ("照片-002.png", 4_100_000),
-            ("照片-003.jpg", 2_000_000),
+            ("文件-001.jpg", 3_400_000u64),
+            ("文件-002.png", 4_100_000),
+            ("文件-003.jpg", 2_000_000),
             ("视频-001.mp4", 1_200_000),
             ("视频-002.mp4", 3_300_000),
         ] {
@@ -1192,8 +1192,8 @@ mod tests {
 
         // 2) 填好的表单
         let mut config = crate::config::Config::default();
-        config.source_dir = card.join("相册").display().to_string();
-        config.target_dir = "/Volumes/BACKUP/import".into();
+        config.source_dir = sink.join("待归档").display().to_string();
+        config.target_dir = "/tmp/filecopy-dump-out".into();
         config.extensions = vec!["jpg".into(), "nef".into(), "mp4".into()];
         config.exclude = vec!["*.tmp".into()];
         config.strategy = "date_tree".into();
@@ -1247,13 +1247,13 @@ mod tests {
         // 3) 目录浏览器 / 配置选择 / 保存对话框
         let browser = BrowserState {
             field: Field::Source,
-            dir: PathBuf::from("/Volumes/CARD"),
+            dir: PathBuf::from("/Users/me/Downloads"),
             entries: vec![
                 BrowserEntry::Parent,
                 BrowserEntry::ChooseHere,
-                BrowserEntry::Dir(PathBuf::from("/Volumes/CARD/相册")),
-                BrowserEntry::Dir(PathBuf::from("/Volumes/CARD/视频")),
-                BrowserEntry::Dir(PathBuf::from("/Volumes/CARD/其他")),
+                BrowserEntry::Dir(PathBuf::from("/Users/me/Downloads/待归档")),
+                BrowserEntry::Dir(PathBuf::from("/Users/me/Downloads/文档")),
+                BrowserEntry::Dir(PathBuf::from("/Users/me/Downloads/备份")),
             ],
             selected: 2,
             error: None,
@@ -1264,8 +1264,8 @@ mod tests {
 
         let picker = PickerState {
             files: vec![
-                PathBuf::from("card-2026.json"),
-                PathBuf::from("dcim-daily.json"),
+                PathBuf::from("archive-2026.json"),
+                PathBuf::from("downloads-daily.json"),
                 PathBuf::from("old-legacy.json"),
             ],
             selected: 0,
@@ -1276,8 +1276,8 @@ mod tests {
 
         let mut prompt_app = App::new(None);
         prompt_app.mode = Mode::Prompt(crate::tui::PromptState {
-            input: "card-2026".into(),
-            cursor: 9,
+            input: "archive-2026".into(),
+            cursor: 12,
             error: None,
         });
         std::fs::write(dir.join("prompt.json"), dump(&prompt_app, width, height)).unwrap();
@@ -1299,29 +1299,29 @@ mod tests {
         let record = |name: &str, action: FileAction, detail: &str, dst_name: &str| CopyRecord {
             src: source.join(name),
             dst: PathBuf::from(format!(
-                "/Volumes/BACKUP/import/2026/11/11/相册/旅行/{dst_name}"
+                "/tmp/filecopy-dump-out/2026/11/11/待归档/第一批/{dst_name}"
             )),
             action,
             detail: detail.to_string(),
         };
         let records = vec![
             record(
-                "照片-001.jpg",
+                "文件-001.jpg",
                 FileAction::Copied,
                 "sha256 校验通过",
-                "照片-001.jpg",
+                "文件-001.jpg",
             ),
             record(
-                "照片-002.png",
+                "文件-002.png",
                 FileAction::Copied,
                 "sha256 校验通过",
-                "照片-002.png",
+                "文件-002.png",
             ),
             record(
-                "照片-003.jpg",
+                "文件-003.jpg",
                 FileAction::Overwritten,
                 "sha256 校验通过",
-                "照片-003_1.jpg",
+                "文件-003_1.jpg",
             ),
             record(
                 "视频-001.mp4",
@@ -1345,8 +1345,7 @@ mod tests {
             records,
             logs: vec![
                 "扫描结果: 找到 5 个文件，总大小 14.3 MB".to_string(),
-                "分类策略: 日期目录 + 保留源目录结构（例如 2026/11/11/相册/照片-001.jpg）"
-                    .to_string(),
+                "分类策略: 按创建日期（%Y/%m/%d）+ 保留源目录结构".to_string(),
                 "并行复制: 4 个线程".to_string(),
                 "校验和验收: sha256（复制后比对）".to_string(),
                 "成功 3 个（覆盖 1），跳过 1，失败 1".to_string(),

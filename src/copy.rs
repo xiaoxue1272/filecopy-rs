@@ -47,8 +47,8 @@ impl std::fmt::Display for CopyError {
 
 /// 目标已存在被跳过时，说明「为什么跳过可能是错的」。
 ///
-/// 目标同名但内容不同（大小不一致）是最容易丢照片的场景：相机计数器归零，
-/// 两张卡都有 `IMG_0001.NEF`，先复制的那张占住位置，后一张被静默跳过。
+/// 目标同名但内容不同（大小不一致）是最容易丢东西的场景：来源设备的计数器会归零，
+/// 两批文件里都有 `文件_0001.jpg`，先复制的那批占住位置，后一批被静默跳过。
 pub fn explain_skip(src: &Path, dst: &Path) -> String {
     let (Ok(s), Ok(d)) = (std::fs::metadata(src), std::fs::metadata(dst)) else {
         return String::new();

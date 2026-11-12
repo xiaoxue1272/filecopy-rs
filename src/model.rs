@@ -13,13 +13,15 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 配置格式版本：v1 = 旧 `filecopy.py` 写出的 JSON（没有 `config_version`）。
 pub const CONFIG_VERSION: u32 = 2;
 
-/// 约定：0 成功 / 1 运行或复制失败 / 2 配置或用法错误 / 130 SIGINT / 143 SIGTERM。
+/// 约定：0 成功 / 1 运行或复制失败 / 2 配置或用法错误 / 130 被信号中断。
 pub const EXIT_ERROR: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_SIGINT: i32 = 130;
+/// `SIGTERM` 的约定码。目前 SIGINT 与 SIGTERM 走同一条收尾路径、统一报 130
+/// （`ctrlc` 的回调不区分是哪个信号），保留它给将来按信号区分用。
 pub const EXIT_SIGTERM: i32 = 143;
 
-/// 并行线程上限。相机卡 / 单盘场景 64 已远超需求。
+/// 并行线程上限。单盘顺序读写的场景，64 已远超需求。
 pub const MAX_WORKERS: usize = 64;
 
 /// 默认复制缓冲区（与 `shutil.COPY_BUFSIZE` 一致，1 MiB）。
@@ -165,7 +167,7 @@ pub struct PathCtx<'a> {
 
 /// 日期策略取哪个时间戳：文件创建时间（默认）还是最后修改时间。
 ///
-/// 明确不用 EXIF：相机存储卡上的照片不一定带 EXIF，视频/RAW/其它文件更是没有，
+/// 明确不用 EXIF：来源盘上的文件不一定带 EXIF，视频/RAW/普通文档更是没有，
 /// 而创建/修改时间是所有文件都有的通用属性。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DateSource {

@@ -82,7 +82,10 @@ fn main() -> ExitCode {
 
 fn print_help() {
     print!("{ASCII_LOGO}");
-    println!("filecopy {} — 相机存储卡文件归档工具", VERSION);
+    println!(
+        "filecopy {} — 文件归档工具（按日期 / 扩展名 / 目录结构）",
+        VERSION
+    );
     println!();
     println!("用法：");
     println!("  filecopy                  打开配置界面");

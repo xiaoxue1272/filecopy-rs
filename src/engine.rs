@@ -58,7 +58,7 @@ pub struct Summary {
 impl Summary {
     /// 进程退出码：0 = 无失败；1 = 有失败，或空扫描且开了 fail_empty。
     ///
-    /// 空扫描默认算成功 —— 相机卡插着但还没拍，不该让脚本报错。
+    /// 空扫描默认算成功 —— 源目录暂时是空的（盘刚挂上、还没同步完），不该让脚本报错。
     pub fn exit_code(&self, fail_empty: bool) -> i32 {
         if self.cancelled {
             return crate::model::EXIT_SIGINT;
