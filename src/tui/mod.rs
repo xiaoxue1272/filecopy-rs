@@ -73,15 +73,16 @@ impl Field {
         Field::Target,
         Field::Extensions,
         Field::Exclude,
+        // 分类策略（始终可见：它决定文件落到哪儿）
+        Field::Strategy,
+        Field::DateFormat,
+        Field::DateSource,
         // 性能
         Field::Workers,
         Field::BufferSize,
         // 更多选项 → 高级选项
         Field::Advanced,
-        // 策略与开关（只在展开后可见，位置就在「高级选项」下面）
-        Field::Strategy,
-        Field::DateFormat,
-        Field::DateSource,
+        // 高级选项里的开关（只在展开后可见，位置就在「高级选项」下面）
         Field::Conflict,
         Field::Verify,
         Field::VerifyAlgo,
@@ -116,14 +117,19 @@ impl Field {
         }
     }
 
-    /// 默认收在「高级选项」里的字段：策略、校验、冲突处理、隐藏文件等。
+    /// 分类策略及其细节：始终显示，不受「高级选项」的展开状态影响。
+    pub fn is_strategy_group(self) -> bool {
+        matches!(
+            self,
+            Field::Strategy | Field::DateFormat | Field::DateSource
+        )
+    }
+
+    /// 默认收在「高级选项」里的开关：校验、冲突处理、隐藏文件等。
     pub fn is_advanced_group(self) -> bool {
         matches!(
             self,
-            Field::Strategy
-                | Field::DateFormat
-                | Field::DateSource
-                | Field::Conflict
+            Field::Conflict
                 | Field::Verify
                 | Field::VerifyAlgo
                 | Field::IncludeHidden
@@ -282,11 +288,12 @@ impl FormData {
 
     /// 字段现在是否可见：依赖项没开的字段直接藏起来，不让用户去改无意义的选项。
     pub fn field_visible(&self, field: Field) -> bool {
-        // 依赖项只在「高级选项」展开时才谈得上显示：收起时哪怕策略是按日期、
-        // 校验是开着的，这两行也不在屏幕上，光标不能落到它们上面。
+        // 分类策略决定文件落到哪儿，是核心设置：不管「高级选项」收没收起都在屏幕上。
+        // 它的两个细节跟着策略走（选扁平结构时日期格式就没意义了）。
+        // 其余开关才是「高级」的：收起时连光标都到不了。
         match field {
-            Field::DateFormat => self.advanced_open && self.uses_date_format(),
-            Field::DateSource => self.advanced_open && self.uses_date_format(),
+            Field::Strategy => true,
+            Field::DateFormat | Field::DateSource => self.uses_date_format(),
             Field::VerifyAlgo => self.advanced_open && self.verify,
             other if other.is_advanced_group() => self.advanced_open,
             _ => true,
@@ -721,6 +728,11 @@ impl App {
         if self.form.field_visible(self.field) {
             return;
         }
+        // 日期格式/来源因为换了策略而消失时，退回「分类策略」那一行
+        if self.field.is_strategy_group() && self.form.field_visible(Field::Strategy) {
+            self.focus(Field::Strategy);
+            return;
+        }
         // 高级选项里的行被藏起来时，退回「高级选项」那一行，别把人扔到表单开头
         if self.field.is_advanced_group() && self.form.field_visible(Field::Advanced) {
             self.focus(Field::Advanced);
@@ -743,7 +755,7 @@ impl App {
         // 展开后光标直接进入新出现的第一行，收起后退回「高级选项」这一行，
         // 不然光标会卡在开关行上、得绕一圈才能进去。
         if self.form.advanced_open {
-            self.focus(Field::Strategy);
+            self.focus(Field::Conflict);
         } else {
             self.focus(Field::Advanced);
         }
@@ -1556,8 +1568,15 @@ mod tests {
                 "表单缺少 {needle:?}；实际屏幕:\n{text}"
             );
         }
-        // 收起时策略/校验这些不该占地方
-        for needle in ["分类策略", "日期格式", "覆盖同名", "校验和"] {
+        // 分类策略常驻，收起「更多选项」也不影响它
+        for needle in ["分类策略", "日期格式", "日期来源"] {
+            assert!(
+                text.contains(needle),
+                "分类策略不该被收起，缺少 {needle:?}；实际屏幕:\n{text}"
+            );
+        }
+        // 真正的开关收起时不占地方
+        for needle in ["覆盖同名", "校验和", "包含隐藏", "空扫描算失败"] {
             assert!(
                 !text.contains(needle),
                 "收起状态不该出现 {needle:?}；实际屏幕:\n{text}"
@@ -1572,7 +1591,6 @@ mod tests {
         app.form.verify = true;
         let text = draw(&app, 110, 40);
         for needle in [
-            "策略与开关",
             "分类策略",
             "日期格式",
             "同名文件",
@@ -1627,7 +1645,7 @@ mod tests {
 
         let row = rows
             .iter()
-            .find(|line| line.contains("分类策略"))
+            .find(|line| line.contains("分类策略["))
             .unwrap_or_else(|| panic!("没画出「分类策略」这一行:\n{text}"));
         assert!(
             row.contains("date_tree"),
@@ -1789,16 +1807,36 @@ mod tests {
     }
 
     #[test]
-    fn date_source_is_only_shown_for_date_strategies() {
+    fn strategy_can_be_changed_while_the_advanced_options_are_collapsed() {
+        // 分类策略不在「高级选项」里，收起状态下也得能直接改
         let mut app = App::new(None);
-        app.form.advanced_open = true;
+        app.form.advanced_open = false;
+        app.field = Field::Strategy;
+        handle_key(&mut app, key(KeyCode::Char(' ')));
+        assert_eq!(app.form.strategy_idx, 1, "空格应该切到下一个策略");
+        assert_eq!(app.form.to_config().strategy, "date_tree");
+    }
+
+    #[test]
+    fn switching_to_a_plain_strategy_moves_focus_off_the_date_rows() {
+        let mut app = App::new(None);
+        app.focus(Field::DateFormat);
+        app.form.strategy_idx = 2; // flat：日期格式/来源这两行会消失
+        app.normalize_field();
+        assert_eq!(app.field, Field::Strategy, "光标应退回「分类策略」那一行");
+    }
+
+    #[test]
+    fn date_source_follows_the_strategy_and_not_the_advanced_toggle() {
+        let mut app = App::new(None);
+        app.form.advanced_open = false;
         app.form.strategy_idx = 2; // flat
         assert!(!app.form.field_visible(Field::DateSource));
         app.form.strategy_idx = 1; // date_tree
         assert!(app.form.field_visible(Field::DateSource));
-        // 收起高级选项时也不该出现
-        app.form.advanced_open = false;
-        assert!(!app.form.field_visible(Field::DateSource));
+        // 分类策略常驻，所以收起「更多选项」不影响这几行
+        assert!(app.form.field_visible(Field::DateFormat));
+        assert!(app.form.field_visible(Field::Strategy));
     }
 
     #[test]
@@ -2071,12 +2109,14 @@ mod tests {
         let mut app = App::new(None);
         app.field = Field::Advanced;
         assert!(!app.form.advanced_open);
-        assert!(!app.form.visible_fields().contains(&Field::Strategy));
+        assert!(!app.form.visible_fields().contains(&Field::Conflict));
+        // 分类策略不在这一组里，收起时照样在屏幕上
+        assert!(app.form.visible_fields().contains(&Field::Strategy));
         handle_key(&mut app, key(KeyCode::Char(' ')));
         assert!(app.form.advanced_open);
-        assert!(app.form.visible_fields().contains(&Field::Strategy));
+        assert!(app.form.visible_fields().contains(&Field::Conflict));
         // 展开后光标应该已经在高级选项区里了
-        assert_eq!(app.field, Field::Strategy);
+        assert_eq!(app.field, Field::Conflict);
         // 收起要在「高级选项」那一行上按
         app.field = Field::Advanced;
         handle_key(&mut app, key(KeyCode::Char(' ')));
@@ -2090,25 +2130,25 @@ mod tests {
         app.field = Field::Advanced;
         assert!(!app.form.advanced_open);
         handle_key(&mut app, key(KeyCode::Char(' ')));
-        // 一展开就能直接改策略，不用绕一圈
-        assert_eq!(app.field, Field::Strategy);
+        // 一展开就能直接改开关，不用绕一圈
+        assert_eq!(app.field, Field::Conflict);
         // 而且这一行必须真的画在屏幕上（以前光标会落在看不见的行上）
         let text = draw(&app, 110, 40);
         assert!(
-            text.contains(">分类策略"),
+            text.contains(">同名文件"),
             "光标所在行应可见且带 > 标记；实际:\n{text}"
         );
         handle_key(&mut app, key(KeyCode::Down));
-        assert_eq!(app.field, Field::DateFormat);
+        assert_eq!(app.field, Field::Verify);
     }
 
     #[test]
     fn navigation_follows_the_screen_order() {
         let mut app = App::new(None);
         app.form.advanced_open = false;
-        // 收起时按行往下：目录四项 → 线程数 → 缓冲区 → 单位 → 高级选项 → 开始
+        // 收起时按行往下：目录四项 → 分类策略（常驻）→ 线程数 → 缓冲区 → 高级选项 → 开始
         let mut seen = vec![app.field];
-        for _ in 0..8 {
+        for _ in 0..11 {
             handle_key(&mut app, key(KeyCode::Down));
             seen.push(app.field);
         }
@@ -2119,6 +2159,9 @@ mod tests {
                 Field::Target,
                 Field::Extensions,
                 Field::Exclude,
+                Field::Strategy,
+                Field::DateFormat,
+                Field::DateSource,
                 Field::Workers,
                 Field::BufferSize,
                 Field::Advanced,
@@ -2130,14 +2173,15 @@ mod tests {
 
     #[test]
     fn collapsed_section_never_puts_the_cursor_on_a_hidden_row() {
-        // 按日期策略 + 开校验，但高级选项收起：这两行不在屏幕上
+        // 高级选项收起：开关行不在屏幕上（日期格式/来源已经常驻了）
         let mut app = App::new(None);
         app.form.advanced_open = false;
         app.form.strategy_idx = 1; // date_tree
         app.form.verify = true;
+        assert!(app.form.field_visible(Field::DateFormat), "日期格式已常驻");
         for visible in app.form.visible_fields() {
             assert!(
-                !matches!(visible, Field::DateFormat | Field::VerifyAlgo),
+                !matches!(visible, Field::Conflict | Field::VerifyAlgo | Field::Verify),
                 "收起时不该把 {visible:?} 当作可停留的行"
             );
         }
@@ -2240,10 +2284,15 @@ mod tests {
         app.form.verify = true;
         let text = draw(&app, 110, 40);
         let toggle = text.find("高级选项").expect("应有高级选项行");
-        let strategy = text.find("分类策略").expect("展开后应有分类策略");
+        let conflict = text.find("同名文件").expect("展开后应有同名文件");
         assert!(
-            toggle < strategy,
-            "展开的内容应出现在「高级选项」下方；实际:\n{text}"
+            toggle < conflict,
+            "展开的开关应出现在「高级选项」下方；实际:\n{text}"
+        );
+        let strategy = text.find("分类策略").expect("分类策略应当常驻");
+        assert!(
+            strategy < toggle,
+            "分类策略在「更多选项」上面，不跟着它收起；实际:\n{text}"
         );
     }
 

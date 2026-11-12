@@ -48,6 +48,20 @@ def render(spec_path: Path, out_path: Path) -> None:
     draw = ImageDraw.Draw(img)
     cjk, mono = load_fonts(14)
 
+    # 双宽字符只画在第一格，右边那格是终端留给它的「第二格」：
+    # ratatui 不会给这格上样式，实测里它的底色是默认色。高亮选中中文时
+    # 这格就会把背景截断成斑马纹，所以这里让第二格继承前一格的底色。
+    chars = {}
+    for cell in spec["cells"]:
+        chars[(cell["y"], cell["x"])] = cell["ch"]
+    effective = {}
+    for cell in spec["cells"]:
+        y, x = cell["y"], cell["x"]
+        bg = cell["bg"]
+        if x > 0 and is_wide(chars.get((y, x - 1), " ")):
+            bg = effective[(y, x - 1)]
+        effective[(y, x)] = bg
+
     # 每格先铺背景色（相邻同色合并成一段，省得画几千个矩形）
     rows = {}
     for cell in spec["cells"]:
@@ -56,7 +70,7 @@ def render(spec_path: Path, out_path: Path) -> None:
         cells.sort(key=lambda c: c["x"])
         run_start, run_color = None, None
         for cell in cells + [None]:
-            color = cell["bg"] if cell else None
+            color = effective[(y, cell["x"])] if cell else None
             if color != run_color:
                 if run_color not in (None, "#1c1c1c") and run_start is not None:
                     x0 = PAD + run_start * CELL_W

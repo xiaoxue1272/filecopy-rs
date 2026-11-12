@@ -171,6 +171,19 @@ impl FormLayout {
             layout.field(field, field_line(app, field, form, cursor));
         }
 
+        // 分类策略是所有设置里最要紧的一个（文件落到哪儿），必须始终可见，
+        // 不能像别的开关那样收进「更多选项」里
+        layout.section(" 分类策略 ");
+        layout.field(
+            Field::Strategy,
+            field_line(app, Field::Strategy, form, cursor),
+        );
+        for field in [Field::DateFormat, Field::DateSource] {
+            if form.field_visible(field) {
+                layout.field(field, field_line(app, field, form, cursor));
+            }
+        }
+
         layout.section(" 性能 ");
         // 线程数和缓冲区都是输入框，所以各占一行：并排的话 ←→ 既想移光标又想换列
         layout.field(
@@ -221,34 +234,23 @@ impl FormLayout {
             if form.advanced_open {
                 "   空格 收起".to_string()
             } else {
-                // 收起状态下把仍然生效的高级设置摘要出来，免得「藏起来的选项偷偷生效」
-                format!("   空格 展开 · {}", advanced_summary(form))
+                // 收起状态下把仍然生效的开关摘要出来，免得「藏起来的选项偷偷生效」
+                let summary = advanced_summary(form);
+                if summary.is_empty() {
+                    "   空格 展开".to_string()
+                } else {
+                    format!("   空格 展开 · {summary}")
+                }
             },
             Style::default().fg(Color::DarkGray),
         ));
         layout.field(Field::Advanced, advanced);
 
-        // 展开的内容紧跟在「高级选项」这一行下面，而不是插到它上面
+        // 展开的内容紧跟在「高级选项」这一行下面，和它同属「更多选项」这一组
         if form.advanced_open {
-            layout.section(" 策略与开关 ");
-            for field in [
-                Field::Strategy,
-                Field::DateFormat,
-                Field::DateSource,
-                Field::Conflict,
-            ] {
-                if form.field_visible(field) {
-                    layout.field(field, field_line(app, field, form, cursor));
-                }
-            }
             let column = (width.saturating_sub(4) as usize / 2).clamp(24, 34);
             // 按屏幕顺序排；有配对的并排一行，没有配对的（空扫描算失败）单独一行
-            let mut placed = vec![
-                Field::Strategy,
-                Field::DateFormat,
-                Field::DateSource,
-                Field::Conflict,
-            ];
+            let mut placed = Vec::new();
             for field in super::Field::ALL {
                 if !field.is_advanced_group() || placed.contains(&field) {
                     continue;
@@ -730,15 +732,8 @@ fn pair_line(left: Line<'static>, right: Line<'static>, column: usize) -> Line<'
 
 /// 收起「高级选项」时，用它生成一行摘要，说明哪些高级设置在生效。
 fn advanced_summary(form: &FormData) -> String {
-    let index = form.strategy_idx.min(Strategy::ALL.len() - 1);
-    let mut parts = vec![Strategy::ALL[index].name().to_string()];
-    if form.uses_date_format() {
-        parts.push(form.date_format.clone());
-        // 日期来源收起来之后也得能看见，否则「按哪个时间」就成了黑盒
-        if form.date_source() != crate::model::DateSource::default() {
-            parts.push(form.date_source().ui_label().to_string());
-        }
-    }
+    // 分类策略和日期格式已经常驻在表单里，这里只摘要真正被收起的那几项
+    let mut parts = Vec::new();
     if form.verify {
         let algo =
             super::VERIFY_ALGORITHMS[form.verify_algo_idx.min(super::VERIFY_ALGORITHMS.len() - 1)];
