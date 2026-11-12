@@ -345,41 +345,34 @@ fn draw_form(f: &mut Frame, area: Rect, app: &super::App) {
     let layout = FormLayout::new(app, area.width);
 
     let hint_lines: Vec<Line<'static>> = if app.errors.is_empty() {
-        let strategy = Strategy::ALL[form.strategy_idx.min(Strategy::ALL.len() - 1)];
-        let mut lines = vec![
-            Line::from(vec![
-                Span::styled(" 策略说明: ", Style::default().fg(Color::DarkGray)),
-                Span::raw(strategy.describe(&form.date_format, form.date_source())),
-            ]),
-            Line::from({
-                // 落点是真算的：拿源目录里第一个会复制的文件，走一遍引擎那套策略计算
-                let preview = app.preview();
-                let mut spans = vec![Span::styled(
-                    " 示例落点: ",
+        let mut lines = vec![Line::from({
+            // 落点是真算的：拿源目录里第一个会复制的文件，走一遍引擎那套策略计算
+            let preview = app.preview();
+            let mut spans = vec![Span::styled(
+                " 示例落点: ",
+                Style::default().fg(Color::DarkGray),
+            )];
+            if preview.relative.is_empty() {
+                // 还没选源目录：算出来的落点无从谈起，别硬编一条给人看
+                spans.push(Span::styled(
+                    "（选好源目录后显示）",
                     Style::default().fg(Color::DarkGray),
-                )];
-                if preview.relative.is_empty() {
-                    // 还没选源目录：算出来的落点无从谈起，别硬编一条给人看
+                ));
+            } else {
+                spans.push(Span::styled(
+                    preview.relative,
+                    Style::default().fg(Color::LightBlue),
+                ));
+                if !preview.from_real_file {
+                    // 说实话：这不是真实文件的落点，别让人以为扫到了文件
                     spans.push(Span::styled(
-                        "（选好源目录后显示）",
+                        "（占位示例，源目录里暂无匹配文件）",
                         Style::default().fg(Color::DarkGray),
                     ));
-                } else {
-                    spans.push(Span::styled(
-                        preview.relative,
-                        Style::default().fg(Color::LightBlue),
-                    ));
-                    if !preview.from_real_file {
-                        // 说实话：这不是真实文件的落点，别让人以为扫到了文件
-                        spans.push(Span::styled(
-                            "（占位示例，源目录里暂无匹配文件）",
-                            Style::default().fg(Color::DarkGray),
-                        ));
-                    }
                 }
-                spans
-            }),
-        ];
+            }
+            spans
+        })];
         // 光标停在日期格式上时，给一段不吃编程知识的格式说明
         if app.field == Field::DateFormat && form.uses_date_format() {
             lines.push(Line::from(vec![
@@ -405,7 +398,7 @@ fn draw_form(f: &mut Frame, area: Rect, app: &super::App) {
     };
 
     let needed = layout.height();
-    // 提示行按「越靠后越重要」排列（策略说明 → 示例落点 → 格式说明），
+    // 提示行按「越靠后越重要」排列（示例落点 → 格式说明），
     // 空间不够时从前面砍，这样正在编辑日期格式时，格式说明不会先被挤掉。
     let hint_want = hint_lines.len() as u16;
     // 空间够就照常显示提示；不够时先牺牲提示，但错误信息尽量保留
@@ -418,7 +411,7 @@ fn draw_form(f: &mut Frame, area: Rect, app: &super::App) {
         let min_form = 6.min(area.height);
         hint_want.min(area.height.saturating_sub(min_form))
     };
-    // 位置不够时砍掉最前面的提示行（策略说明最先走），保住更贴近当前操作的那几行
+    // 位置不够时砍掉最前面的提示行（示例落点最先走），保住更贴近当前操作的那几行
     let hint_skip = (hint_want - hint_h) as usize;
     // 每条提示都压成单行：否则长句折行会把下面的页脚顶掉
     let hint_lines: Vec<Line<'static>> = hint_lines
@@ -447,7 +440,15 @@ fn draw_form(f: &mut Frame, area: Rect, app: &super::App) {
     for section in &layout.sections {
         let height = section.lines.len() as u16 + 2;
         let rect = Rect::new(0, y, area.width, height);
-        Paragraph::new(section.lines.clone())
+        // 超宽的行走 clip_line：不加这一刀，长路径/长说明会被边框硬切掉半个字
+        let inner = area.width.saturating_sub(2);
+        let lines: Vec<Line<'static>> = section
+            .lines
+            .iter()
+            .cloned()
+            .map(|line| clip_line(line, inner))
+            .collect();
+        Paragraph::new(lines)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -666,8 +667,23 @@ fn field_line(app: &super::App, field: Field, form: &FormData, cursor: usize) ->
                 Style::default().fg(Color::DarkGray),
             ));
         } else {
-            spans.push(Span::styled(value, Style::default().fg(Color::White)));
+            // 选中态会先画一个空格再接光标块，这里补同样的空格，整列才对得齐
+            spans.push(Span::styled(
+                format!(" {value}"),
+                Style::default().fg(Color::White),
+            ));
         }
+    }
+    // 策略后面紧跟一句人话说明：它和「分类策略」同一行，不用去底部找
+    if field == Field::Strategy {
+        let strategy = Strategy::ALL[form.strategy_idx.min(Strategy::ALL.len() - 1)];
+        spans.push(Span::styled(
+            format!(
+                " {}",
+                strategy.describe(&form.date_format, form.date_source())
+            ),
+            Style::default().fg(Color::DarkGray),
+        ));
     }
     // 日期格式后面直接给个「算出来长什么样」，不用懂 %Y 也能看懂
     if field == Field::DateFormat && form.uses_date_format() {

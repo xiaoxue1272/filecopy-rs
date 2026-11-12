@@ -1613,6 +1613,37 @@ mod tests {
     }
 
     #[test]
+    fn strategy_description_sits_on_the_strategy_line() {
+        let mut app = App::new(None);
+        app.form.advanced_open = true;
+        app.form.strategy_idx = 1; // date_tree
+        app.form.date_format = "%Y/%m/%d".to_string();
+
+        let mut terminal = Terminal::new(TestBackend::new(150, 40)).unwrap();
+        terminal.draw(|f| render::draw(f, &app)).unwrap();
+        let text = screen_text(&terminal);
+        // 双宽字符的第二格是占位空格，逐行压掉空白后再找
+        let rows: Vec<String> = text.lines().map(squash).collect();
+
+        let row = rows
+            .iter()
+            .find(|line| line.contains("分类策略"))
+            .unwrap_or_else(|| panic!("没画出「分类策略」这一行:\n{text}"));
+        assert!(
+            row.contains("date_tree"),
+            "这一行该有当前策略值；实际:\n{row}"
+        );
+        assert!(
+            row.contains("保留源目录结构"),
+            "说明要跟在「分类策略」同一行，不该飘在底部；实际这一行:\n{row}\n整屏:\n{text}"
+        );
+        assert!(
+            !rows.iter().any(|line| line.starts_with("策略说明")),
+            "底部不该再有单独的「策略说明」行:\n{text}"
+        );
+    }
+
+    #[test]
     fn tab_moves_between_fields_and_wraps() {
         let mut app = App::new(None);
         assert_eq!(app.field, Field::Source);
