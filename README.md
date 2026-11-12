@@ -311,11 +311,10 @@ cargo fmt --check
 打标签即发版，`v*` 标签会触发三平台打包并自动创建 Release：
 
 ```bash
-# 1. 改版本号（Cargo.toml 是唯一的版本来源）
-#    version = "1.0.1"
-# 2. 提交后打同名标签
-git commit -am "release: v1.0.1"
-git tag -a v1.0.1 -m "filecopy 1.0.1"
+# 1. 改版本号（Cargo.toml 是唯一的版本来源，例如 version = "1.0.2"）
+# 2. 提交后打同名标签（标签去掉 v 前缀必须与 Cargo.toml 完全一致）
+git commit -am "release: v1.0.2"
+git tag -a v1.0.2 -m "filecopy 1.0.2"
 git push origin main --follow-tags
 ```
 

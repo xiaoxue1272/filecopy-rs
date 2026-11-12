@@ -166,7 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 防止「标签写 v1.0.1、Cargo.toml 还是 1.0.0」这种打好包才发现不一致的情况
+      # 防止「标签写 v1.0.2、Cargo.toml 还是 1.0.1」这种打好包才发现不一致的情况
       - name: 校验标签与 Cargo.toml 版本一致
         shell: bash
         run: |
