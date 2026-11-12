@@ -5,6 +5,7 @@
 
 mod render;
 
+use std::cell::RefCell;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +27,7 @@ use crate::model::{
     format_size, CopyRecord, DateSource, FileAction, Strategy, EXIT_SIGINT, VERIFY_ALGORITHMS,
     VERSION,
 };
+use crate::preview::{self, Preview};
 
 /// 外部信号（SIGINT / SIGTERM / SIGHUP）到达时置位。
 ///
@@ -423,13 +425,6 @@ impl FormData {
         DateSource::ALL[self.date_source_idx.min(DateSource::ALL.len() - 1)]
     }
 
-    /// 「扩展名」里填的第一个，用来给示例落点编文件名。
-    pub fn first_extension(&self) -> Option<String> {
-        crate::config::parse_extensions(&self.extensions)
-            .into_iter()
-            .next()
-    }
-
     /// 数字 × 单位 = 字节数；`0` 交给引擎按默认处理。
     pub fn buffer_bytes(&self) -> Option<u64> {
         let value = self.buffer_size.trim().parse::<u64>().ok()?;
@@ -586,6 +581,16 @@ pub struct App {
     /// 目录浏览器的滚动偏移（长目录列表用）。
     pub browser_scroll: usize,
     pub picker_scroll: usize,
+    /// 「示例落点」的缓存。放 `RefCell` 是因为渲染只拿得到 `&App`，
+    /// 而预览要在渲染时按需重算（源目录可能很大，不能每帧都扫）。
+    preview_cache: RefCell<PreviewCache>,
+}
+
+/// 预览缓存：key 变了才重算。
+#[derive(Default)]
+struct PreviewCache {
+    key: String,
+    preview: Preview,
 }
 
 impl App {
@@ -607,6 +612,7 @@ impl App {
             cwd,
             browser_scroll: 0,
             picker_scroll: 0,
+            preview_cache: RefCell::new(PreviewCache::default()),
         };
         if let Some(cfg) = initial {
             if let Some(notice) = cfg.legacy_notice() {
@@ -614,6 +620,52 @@ impl App {
             }
         }
         app
+    }
+
+    /// 影响「示例落点」的所有输入，拼成一个 key：只有它变了才重算。
+    ///
+    /// 故意不含线程数、缓冲区、校验这些跟落点无关的字段，
+    /// 免得改个线程数就白扫一遍源目录。
+    fn preview_key(&self) -> String {
+        let form = &self.form;
+        // \u{1} 当分隔符：路径里不可能出现它，拼接不会撞车
+        [
+            form.source.clone(),
+            form.target.clone(),
+            form.extensions.clone(),
+            form.exclude.clone(),
+            form.strategy_idx.to_string(),
+            form.date_format.clone(),
+            form.date_source_idx.to_string(),
+            format!("{}/{}", form.include_hidden, form.recursive),
+        ]
+        .join("\u{1}")
+    }
+
+    /// 按真实策略逻辑算出「第一个文件会落到哪」。
+    ///
+    /// 直接吃 `FormData::to_config()` 的结果：那就是引擎启动时拿到的同一份
+    /// 配置（含着 `~` / 引号 / 环境变量的展开），不会出现「预览一套、真跑另一套」。
+    fn compute_preview(&self) -> Preview {
+        preview::compute_from_config(&self.form.to_config())
+    }
+
+    /// 渲染时取预览；没有变化就用缓存。
+    pub fn preview(&self) -> Preview {
+        let key = self.preview_key();
+        if let Ok(cache) = self.preview_cache.try_borrow() {
+            if cache.key == key {
+                return cache.preview.clone();
+            }
+        }
+        let preview = self.compute_preview();
+        if let Ok(mut cache) = self.preview_cache.try_borrow_mut() {
+            *cache = PreviewCache {
+                key,
+                preview: preview.clone(),
+            };
+        }
+        preview
     }
 
     /// 上下移动：一「行」是一个并排组，尽量停在原来那一列上。
@@ -1719,25 +1771,135 @@ mod tests {
     }
 
     #[test]
-    fn example_destination_uses_a_generic_name_and_your_extension() {
-        let mut app = App::new(None);
-        app.form.extensions = "png".to_string();
-        let text = draw(&app, 110, 40);
+    fn example_destination_is_blank_until_a_source_is_chosen() {
+        let app = App::new(None);
+        let text = draw(&app, 110, 34);
         assert!(
-            text.contains("2026/11/08/文件.png"),
-            "示例应写成「文件.png」而不是具体的照片名；实际:\n{text}"
+            text.contains("示例落点:（选好源目录后显示）"),
+            "没选源目录时不该硬编一个落点出来；实际:\n{text}"
         );
-        assert!(
-            !text.contains("照片-001"),
-            "不该再出现具体的照片名:\n{text}"
-        );
+    }
 
-        app.form.extensions.clear();
+    #[test]
+    fn example_destination_follows_the_date_format() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("卡");
+        std::fs::create_dir_all(&src).unwrap();
+        // 源目录里只有 nef，而这里只要 png：正好走「占位示例」那条路
+        std::fs::write(src.join("样片.nef"), b"x").unwrap();
+
+        let mut app = App::new(None);
+        app.form.source = src.display().to_string();
+        app.form.extensions = "png".to_string();
+        // %m-%d 只有两级，和默认的 %Y/%m/%d 形状完全不同：写死日期的话这里必挂
+        app.form.date_format = "%m-%d".to_string();
         let text = draw(&app, 110, 40);
+        let expected = format!("示例落点:{}/文件.png", chrono::Local::now().format("%m-%d"));
         assert!(
-            text.contains("2026/11/08/文件") && !text.contains("文件."),
-            "没填扩展名时就不带后缀；实际:\n{text}"
+            text.contains(&expected),
+            "示例落点必须跟着日期格式算；期望包含 {expected:?}，实际:\n{text}"
         );
+        assert!(
+            text.contains("占位示例") && text.contains("暂无匹配文件"),
+            "没有匹配文件时要说明这是占位示例:\n{text}"
+        );
+    }
+
+    #[test]
+    fn example_destination_comes_from_a_real_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("卡");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("样片.jpg"), b"x").unwrap();
+
+        let mut app = App::new(None);
+        app.form.source = src.display().to_string();
+        app.form.target = "/out".to_string();
+        app.form.extensions = "jpg".to_string();
+        app.form.strategy_idx = 1; // date_tree
+        let text = draw(&app, 120, 40);
+        let expected = format!(
+            "示例落点:{}/样片.jpg",
+            chrono::Local::now().format("%Y/%m/%d")
+        );
+        assert!(
+            text.contains(&expected),
+            "应拿源目录里真实存在的文件算落点；期望包含 {expected:?}，实际:\n{text}"
+        );
+        assert!(
+            !text.contains("占位示例") && !text.contains("暂无匹配文件"),
+            "有真实文件时不该再提示占位:\n{text}"
+        );
+    }
+
+    #[test]
+    fn example_destination_shows_the_real_source_subfolders() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("卡");
+        let nested = src.join("相册").join("旅行");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("样片.jpg"), b"x").unwrap();
+
+        let mut app = App::new(None);
+        app.form.source = src.display().to_string();
+        app.form.target = "/out".to_string();
+        app.form.extensions = "jpg".to_string();
+        app.form.strategy_idx = 3; // tree
+        let text = draw(&app, 120, 40);
+        assert!(
+            text.contains("示例落点:相册/旅行/样片.jpg"),
+            "tree 策略要把真实源目录结构显示出来；实际:\n{text}"
+        );
+    }
+
+    #[test]
+    fn example_destination_expands_quotes_and_spaces_like_the_engine() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("卡");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("样片.jpg"), b"x").unwrap();
+
+        let mut app = App::new(None);
+        // Finder「拷贝路径名」带引号，手输常带尾随空格；引擎会展开，预览必须同样处理
+        app.form.source = format!("  \"{}\"  ", src.display());
+        app.form.target = "/out".to_string();
+        app.form.extensions = "jpg".to_string();
+        app.form.strategy_idx = 2; // flat
+        let text = draw(&app, 120, 40);
+        assert!(
+            text.contains("示例落点:样片.jpg"),
+            "带引号/空格的源目录也要能算出真实落点；实际:\n{text}"
+        );
+        assert!(
+            !text.contains("暂无匹配文件"),
+            "不该因为输入格式退化成占位示例:\n{text}"
+        );
+    }
+
+    #[test]
+    fn example_destination_recomputes_when_settings_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("卡");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("样片.nef"), b"x").unwrap();
+
+        let mut app = App::new(None);
+        app.form.source = src.display().to_string();
+        app.form.target = "/out".to_string();
+        app.form.extensions = "nef".to_string();
+        app.form.strategy_idx = 4; // ext
+
+        let first = draw(&app, 120, 40);
+        assert!(first.contains("示例落点:nef/样片.nef"), "实际:\n{first}");
+
+        // 换策略后必须重新算，不能吃旧缓存
+        app.form.strategy_idx = 2; // flat
+        let second = draw(&app, 120, 40);
+        assert!(
+            second.contains("示例落点:样片.nef"),
+            "换策略后预览要跟着变；实际:\n{second}"
+        );
+        assert!(!second.contains("nef/样片.nef"));
     }
 
     #[test]

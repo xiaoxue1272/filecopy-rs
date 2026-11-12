@@ -9,6 +9,7 @@ pub mod datefmt;
 pub mod engine;
 pub mod model;
 pub mod plan;
+pub mod preview;
 pub mod scan;
 pub mod tui;
 

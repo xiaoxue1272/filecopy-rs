@@ -135,27 +135,6 @@ impl Strategy {
         }
     }
 
-    /// 交互式选择用的落点示例。
-    ///
-    /// `ext` 是界面上填的第一个扩展名，示例文件名跟着它走（`文件.jpg`），
-    /// 不写死某个具体的相机/照片名，免得看着像只支持那一种文件。
-    pub fn ui_example(self, ext: Option<&str>) -> String {
-        let file = match ext {
-            Some(ext) if !ext.is_empty() => format!("文件.{ext}"),
-            _ => "文件".to_string(),
-        };
-        match self {
-            Strategy::Date => format!("2026/11/08/{file}"),
-            Strategy::DateTree => format!("2026/11/08/子目录/{file}"),
-            Strategy::Flat => file,
-            Strategy::Tree => format!("子目录/{file}"),
-            Strategy::Ext => match ext {
-                Some(ext) if !ext.is_empty() => format!("{ext}/{file}"),
-                _ => "扩展名/文件".to_string(),
-            },
-        }
-    }
-
     /// 实例级描述（date 系列要带上日期来源与格式）。
     pub fn describe(self, date_format: &str, date_source: DateSource) -> String {
         let when = date_source.ui_label();

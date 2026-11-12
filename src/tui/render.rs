@@ -351,14 +351,34 @@ fn draw_form(f: &mut Frame, area: Rect, app: &super::App) {
                 Span::styled(" 策略说明: ", Style::default().fg(Color::DarkGray)),
                 Span::raw(strategy.describe(&form.date_format, form.date_source())),
             ]),
-            Line::from(vec![
-                Span::styled(" 示例落点: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    // 文件名跟着「扩展名」里填的第一个走，不再写死成某个具体照片名
-                    strategy.ui_example(form.first_extension().as_deref()),
-                    Style::default().fg(Color::LightBlue),
-                ),
-            ]),
+            Line::from({
+                // 落点是真算的：拿源目录里第一个会复制的文件，走一遍引擎那套策略计算
+                let preview = app.preview();
+                let mut spans = vec![Span::styled(
+                    " 示例落点: ",
+                    Style::default().fg(Color::DarkGray),
+                )];
+                if preview.relative.is_empty() {
+                    // 还没选源目录：算出来的落点无从谈起，别硬编一条给人看
+                    spans.push(Span::styled(
+                        "（选好源目录后显示）",
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                } else {
+                    spans.push(Span::styled(
+                        preview.relative,
+                        Style::default().fg(Color::LightBlue),
+                    ));
+                    if !preview.from_real_file {
+                        // 说实话：这不是真实文件的落点，别让人以为扫到了文件
+                        spans.push(Span::styled(
+                            "（占位示例，源目录里暂无匹配文件）",
+                            Style::default().fg(Color::DarkGray),
+                        ));
+                    }
+                }
+                spans
+            }),
         ];
         // 光标停在日期格式上时，给一段不吃编程知识的格式说明
         if app.field == Field::DateFormat && form.uses_date_format() {
@@ -1139,13 +1159,29 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let (width, height) = (104u16, 30u16);
 
+        // 截图里的「示例落点」现在走真实计算，所以得造一棵真实存在的小目录：
+        // 固定用 /tmp 下的短路径，比 /var/folders/xxxx/T 好读，也不占空间。
+        let card = PathBuf::from("/tmp/filecopy-dump-card");
+        let source = card.join("相册").join("旅行");
+        std::fs::create_dir_all(&source).unwrap();
+        for (name, size) in [
+            ("照片-001.jpg", 3_400_000u64),
+            ("照片-002.png", 4_100_000),
+            ("照片-003.jpg", 2_000_000),
+            ("视频-001.mp4", 1_200_000),
+            ("视频-002.mp4", 3_300_000),
+        ] {
+            let file = std::fs::File::create(source.join(name)).unwrap();
+            file.set_len(size).unwrap();
+        }
+
         // 1) 空表单
         let empty = App::new(None);
         std::fs::write(dir.join("form-empty.json"), dump(&empty, width, height)).unwrap();
 
         // 2) 填好的表单
         let mut config = crate::config::Config::default();
-        config.source_dir = "/Volumes/CARD/相册".into();
+        config.source_dir = card.join("相册").display().to_string();
         config.target_dir = "/Volumes/BACKUP/import".into();
         config.extensions = vec!["jpg".into(), "nef".into(), "mp4".into()];
         config.exclude = vec!["*.tmp".into()];
@@ -1248,21 +1284,7 @@ mod tests {
         summary.planned_files = 5;
         summary.pending_bytes = 9_500_000;
 
-        // 记录里的大小是渲染时读源文件得到的，所以造几个真文件（稀疏，不占空间）
-        let source = std::env::temp_dir().join("filecopy-dump-card/相册/旅行");
-        std::fs::create_dir_all(&source).unwrap();
-        let sizes = [
-            ("照片-001.jpg", 3_400_000u64),
-            ("照片-002.png", 4_100_000),
-            ("照片-003.jpg", 2_000_000),
-            ("视频-001.mp4", 1_200_000),
-            ("视频-002.mp4", 3_300_000),
-        ];
-        for (name, size) in sizes {
-            let file = std::fs::File::create(source.join(name)).unwrap();
-            file.set_len(size).unwrap();
-        }
-
+        // 记录里的大小是渲染时读源文件得到的，文件在上面已经造好了
         let record = |name: &str, action: FileAction, detail: &str, dst_name: &str| CopyRecord {
             src: source.join(name),
             dst: PathBuf::from(format!(

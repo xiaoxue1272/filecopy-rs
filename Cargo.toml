@@ -1,6 +1,6 @@
 [package]
 name = "filecopy-rs"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "文件归档工具（filecopy 的 Rust 版）"
 license = "MIT"
@@ -8,6 +8,9 @@ license = "MIT"
 [lib]
 name = "filecopy_rs"
 path = "src/lib.rs"
+# 文档注释里全是中文说明，没有可执行的示例；关掉 doctest 这一趟，
+# 免得 rustdoc 白跑一遍（本机 CARGO_HOME 在沙箱内，偶尔会撞上产物不一致）。
+doctest = false
 
 [[bin]]
 name = "filecopy"

@@ -38,7 +38,7 @@ impl FileFilter {
     }
 
     /// 后缀集合只算一次：`should_copy` 对每个文件都要用。
-    fn ext_set(&self) -> HashSet<String> {
+    pub(crate) fn ext_set(&self) -> HashSet<String> {
         self.extensions
             .iter()
             .map(|e| {
@@ -111,6 +111,80 @@ impl FileFilter {
         }
         false
     }
+}
+
+/// 预览用的「第一个待复制文件」。
+///
+/// 遍历顺序与 `scan_sources` 完全一致（目录名、文件名都排序），
+/// 所以预览里那个文件，就是真正开始复制时会处理的第一个文件。
+/// 找不到（空目录 / 过滤条件全不匹配 / 读不了）时返回 `None`。
+///
+/// 每帧都可能调用，所以给了预算：极端情况下（几十万条目的坏介质）
+/// 宁可放弃预览，也不要让界面卡住。
+pub fn first_matching_file(root: &Path, filter: &FileFilter) -> Option<PathBuf> {
+    let ext_set = filter.ext_set();
+    let mut budget = SAMPLE_SCAN_BUDGET;
+    sample_walk(root, filter, &ext_set, &mut budget, 0)
+}
+
+/// 预览扫描最多看这么多个目录项；超过就放弃（退回占位示例）。
+const SAMPLE_SCAN_BUDGET: usize = 50_000;
+
+fn sample_walk(
+    dir: &Path,
+    filter: &FileFilter,
+    ext_set: &HashSet<String>,
+    budget: &mut usize,
+    depth: usize,
+) -> Option<PathBuf> {
+    if depth > 64 || *budget == 0 {
+        return None;
+    }
+    let entries = std::fs::read_dir(dir).ok()?;
+
+    let mut subdirs: Vec<PathBuf> = Vec::new();
+    let mut files: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        if *budget == 0 {
+            return None;
+        }
+        *budget -= 1;
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            if path.is_file() {
+                files.push(path);
+            }
+            continue;
+        }
+        if ft.is_dir() {
+            subdirs.push(path);
+        } else if ft.is_file() {
+            files.push(path);
+        }
+    }
+
+    subdirs.sort();
+    files.sort();
+
+    for file in files {
+        if filter.should_copy(&file, ext_set) {
+            return Some(file);
+        }
+    }
+    if !filter.recursive {
+        return None;
+    }
+    for sub in subdirs {
+        if let Some(hit) = sample_walk(&sub, filter, ext_set, budget, depth + 1) {
+            return Some(hit);
+        }
+    }
+    None
 }
 
 /// 一次扫描的结果。
