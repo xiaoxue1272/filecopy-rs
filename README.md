@@ -1,8 +1,8 @@
 # filecopy-rs
 
-相机存储卡文件归档工具 —— Python 版 filecopy v0.4.2 的 Rust 重写。
+文件归档工具 —— 按策略进行归档
 
-插上卡，选好源目录和目标目录，按底部的「开始」：按拍摄日期 / 扩展名 / 原目录结构把照片视频分门别类复制过去，
+选好源目录和目标目录，按底部的「开始」：按日期 / 扩展名 / 原目录结构把文件分门别类复制过去，
 边复制边校验，同名冲突有明确的处理方式，全程一个界面搞定。
 
 ```
@@ -46,8 +46,7 @@ cargo build --release
 ```
 
 只支持交互式终端（TUI）：`stdin`/`stdout` 不是 tty 时直接以退出码 2 报错退出，
-不会在管道里悄悄跑。命令行也没有「一次性复制」参数 —— 和 Python 版 v0.4.0 起的约定一致，
-所有选项都在界面里完成。
+不会在管道里悄悄跑。所有选项都在界面里完成。
 
 ## 界面
 
@@ -181,7 +180,7 @@ cargo build --release
 {
   "source_dir": "/Volumes/CARD/相册",
   "target_dir": "/Volumes/BACKUP/import",
-  "extensions": ["jpg", "nef", "mp4"],
+  "extensions": ["jpg", "png", "mp4"],
   "overwrite": false,
   "strategy": "date_tree",
   "date_format": "%Y/%m/%d",
@@ -275,10 +274,3 @@ git push origin main --follow-tags
 | `tools/screenshot.py` | 把 `TestBackend` 导出的 JSON 画成 PNG（需要 Pillow） |
 | `.github/workflows/ci.yml` | push / PR：格式、静态检查、测试、跨平台编译检查 |
 | `.github/workflows/release.yml` | `v*` 标签：三平台打包、冒烟测试、发布 Release |
-
-## 与 Python 版的取舍
-
-- **不做命令行批处理模式**：Python 版 v0.4.0 也删掉了，保持同一套交互面。
-- **日期格式**：Rust 用 chrono，认识绝大多数 strftime 格式符；chrono 不认识的（例如 `%+`）会明确报错，
-  而不是在路径里留下 `%+` 字面量。校验白名单与 Python 版一致。
-- **信号处理**：Rust 版在 TUI 内按 Esc / Ctrl-C 请求中断，走同一套「清理临时文件 + 报告」的收尾逻辑。
